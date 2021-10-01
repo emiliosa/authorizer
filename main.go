@@ -4,21 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"reflect"
 	"strings"
 	"time"
 )
-
-type JSONTime struct {
-	data string
-}
-
-func (value *JSONTime) parseJSONTime(time.Time, error) {
-	loc, _ := time.LoadLocation("America/Argentina/Buenos_Aires")
-	time.ParseInLocation(time.RFC3339, value.data, loc)
-}
 
 type Account struct {
 	ActiveCard     bool `json:"active-card"`
@@ -55,27 +45,33 @@ type AccountStatus struct {
 }
 
 const (
-	ACCOUNT_NOT_INITIALIZED       = "account-not-initialized"
-	ACCOUNT_ALREADY_INITIALIZED   = "account-already-initialized"
-	CARD_NOT_ACTIVE               = "card-not-active"
-	DOUBLED_TRANSACTION           = "doubled-transaction"
-	INSUFFICIENT_LIMIT            = "insufficient-limit"
-	HIGH_FRECUENCY_SMALL_INTERVAL = "high-frequency-small-interval"
+	AccountNotInitialized      = "account-not-initialized"
+	AccountAlreadyInitialized  = "account-already-initialized"
+	CardNotActive              = "card-not-active"
+	DoubledTransaction         = "doubled-transaction"
+	InsufficientLimit          = "insufficient-limit"
+	HighFrequencySmallInterval = "high-frequency-small-interval"
 )
 
 func main() {
-	operations := handle()
+	scanner := bufio.NewScanner(os.Stdin)
+
+	operations := process(scanner)
 	out := output(operations)
 	fmt.Println(out)
 }
 
 func output(slice []AccountOperationOutput) string {
-	var data []string
+	var out []string
 	for i := range slice {
-		jsonData, _ := json.Marshal(slice[i])
-		data = append(data, string(jsonData))
+		item := slice[i]
+		if item.Violations == nil {
+			item.Violations = make([]string, 0)
+		}
+		jsonData, _ := json.Marshal(item)
+		out = append(out, string(jsonData))
 	}
-	return strings.Join(data[:], "\n")
+	return strings.Join(out[:], "\n")
 }
 
 func processAccount(operation AccountOperation, accountStatus AccountStatus) AccountOperationOutput {
@@ -83,8 +79,8 @@ func processAccount(operation AccountOperation, accountStatus AccountStatus) Acc
 	var activeCard bool
 	var availableLimit int
 
-	if accountStatus.hasAccount {
-		violations = []string{ACCOUNT_ALREADY_INITIALIZED}
+	if accountStatus.hasAccount && accountStatus.account.ActiveCard == operation.Account.ActiveCard {
+		violations = []string{AccountAlreadyInitialized}
 		activeCard = accountStatus.account.ActiveCard
 		availableLimit = accountStatus.account.AvailableLimit
 	} else {
@@ -105,25 +101,25 @@ func processTransaction(new TransactionOperation, status AccountStatus, operatio
 	if !status.hasAccount {
 		account.ActiveCard = false
 		account.AvailableLimit = 0
-		violations = []string{ACCOUNT_NOT_INITIALIZED}
+		violations = []string{AccountNotInitialized}
 	} else {
 		account.ActiveCard = status.account.ActiveCard
 		account.AvailableLimit = status.account.AvailableLimit - new.Transaction.Amount
 
 		if account.AvailableLimit < 0 {
-			violations = []string{INSUFFICIENT_LIMIT}
+			violations = []string{InsufficientLimit}
 		}
 
 		if !status.account.ActiveCard {
-			violations = append(violations, CARD_NOT_ACTIVE)
+			violations = append(violations, CardNotActive)
 		}
 
 		if hasDoubledTransaction(operations, new.Transaction) {
-			violations = append(violations, DOUBLED_TRANSACTION)
+			violations = append(violations, DoubledTransaction)
 		}
 
 		if hasHighFrequencySmallInterval(operations, new.Transaction) {
-			violations = append(violations, HIGH_FRECUENCY_SMALL_INTERVAL)
+			violations = append(violations, HighFrequencySmallInterval)
 		}
 
 		if violations != nil {
@@ -134,42 +130,32 @@ func processTransaction(new TransactionOperation, status AccountStatus, operatio
 	return AccountOperationOutput{account, violations}
 }
 
-func handle() []AccountOperationOutput {
+func process(scanner *bufio.Scanner) []AccountOperationOutput {
 	var operations = Operations{}
 	var accountStatus = AccountStatus{
 		account:    Account{},
 		hasAccount: false,
 	}
 
-	// Open our jsonFile
-	file, err := os.Open("operations.txt")
-
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	// defer the closing of our file so that we can parse it later on
-	defer func(file *os.File) {
-		if err = file.Close(); err != nil {
-			log.Fatal(err)
-		}
-	}(file)
-
-	scanner := bufio.NewScanner(file)
-	//scanner := bufio.NewScanner(os.Stdin)
-
 	for scanner.Scan() {
 		line := scanner.Text()
 
 		// set interface type for unstructured json
 		var result map[string]interface{}
-		json.Unmarshal([]byte(line), &result)
+		err := json.Unmarshal([]byte(line), &result)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
 
 		switch true {
 		case result["account"] != nil: // check json structure match account structure
 			var accountOperation AccountOperation
-			json.Unmarshal([]byte(line), &accountOperation)
+			err := json.Unmarshal([]byte(line), &accountOperation)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
 
 			output := processAccount(accountOperation, accountStatus)
 
@@ -182,7 +168,11 @@ func handle() []AccountOperationOutput {
 			operations.output = append(operations.output, output)
 		case result["transaction"] != nil: // check json structure match transaction structure
 			var transactionOperation TransactionOperation
-			json.Unmarshal([]byte(line), &transactionOperation)
+			err := json.Unmarshal([]byte(line), &transactionOperation)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
 
 			// convert string to time
 			transactionOperation.Transaction.Time, _ = parseTime(transactionOperation.Transaction.Time.(string))
@@ -205,7 +195,7 @@ func handle() []AccountOperationOutput {
 }
 
 func parseTime(data string) (time.Time, error) {
-	loc, _ := time.LoadLocation("America/Argentina/Buenos_Aires")
+	loc, _ := time.LoadLocation("Etc/GMT")
 	return time.ParseInLocation(time.RFC3339, data, loc)
 }
 
