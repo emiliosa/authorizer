@@ -26,6 +26,9 @@ docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp golang:1.17 make
 # build
 docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp golang:1.17 make build
 
+# compile
+docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp golang:1.17 make compile
+
 # test
 docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp golang:1.17 make test
 
